@@ -1,17 +1,15 @@
 # Maytronics Dolphin
 
-Adds support for Maytronics Dolphin range pool cleaners. Before use, please:
-1. Create a new account with the script below in a terminal window, where you replace email, password, first and lastname.
-2. Sign in to your mobile app with your new account, this will lift the 2 factor authentication.
-3. Add your robot to the new account.
-4. Sign in to the homey app with your new account.
+Adds support for Maytronics Dolphin range pool cleaners with the MyDolphin Plus app.
 
-```
-curl -X POST "https://mbapp18.maytronics.com/api/users/register/" \
-     -H "appkey: 346BDE92-53D1-4829-8A2E-B496014B586C" \
-     -H "Content-Type: application/x-www-form-urlencoded; charset=utf-8" \
-     --data-urlencode 'email=<EMAIL>' \
-     --data-urlencode 'password=<PASSWORD>' \
-     --data-urlencode 'firstName=<FIRST NAME>' \
-     --data-urlencode 'lastName=<LAST NAME>'
-```
+## Setup
+
+1. Add your robot to your account in the MyDolphin Plus app.
+2. In Homey, add a Dolphin Pool Cleaner device and enter the email address you use for the MyDolphin Plus app.
+3. Enter the sign-in code Maytronics emails you.
+
+Maytronics asks you to sign in again with a new code about once a year. When that happens the device becomes unavailable; open the device in Homey and choose **Repair** to sign in again.
+
+### Upgrading from 1.0.x
+
+Earlier versions signed in with an email and password, which Maytronics no longer supports. Existing devices show as unavailable after the upgrade: choose **Repair** on the device and sign in with an emailed code. Your flows keep working.

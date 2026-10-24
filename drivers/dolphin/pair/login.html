@@ -1,0 +1,106 @@
+<style>
+  .dolphin-login p { margin-bottom: 1em; }
+  .dolphin-login .dolphin-link {
+    display: block;
+    margin-top: 1em;
+    background: none;
+    border: none;
+    color: var(--homey-color-blue-500, #0076ff);
+    cursor: pointer;
+  }
+</style>
+
+<div class="dolphin-login">
+  <form id="email-step" class="homey-form">
+    <p id="email-hint"></p>
+    <div class="homey-form-group">
+      <label class="homey-form-label" for="email" id="email-label"></label>
+      <input class="homey-form-input" id="email" type="email" autocomplete="email" placeholder="you@example.com" />
+    </div>
+    <button type="submit" class="homey-button-primary-full" id="send-code"></button>
+  </form>
+
+  <form id="code-step" class="homey-form" style="display: none">
+    <p id="code-hint"></p>
+    <div class="homey-form-group">
+      <label class="homey-form-label" for="code" id="code-label"></label>
+      <input class="homey-form-input" id="code" type="text" inputmode="numeric" autocomplete="one-time-code" />
+    </div>
+    <button type="submit" class="homey-button-primary-full" id="verify-code"></button>
+    <button type="button" class="dolphin-link" id="resend-code"></button>
+  </form>
+</div>
+
+<script type="application/javascript">
+  (function () {
+    // After a successful login: continue to the device list
+    function onLoggedIn() {
+      Homey.nextView();
+    }
+
+    function t(key, tokens) {
+      return Homey.__('pair.login.' + key, tokens);
+    }
+
+    var emailStep = document.getElementById('email-step');
+    var codeStep = document.getElementById('code-step');
+    var emailInput = document.getElementById('email');
+    var codeInput = document.getElementById('code');
+    var email = '';
+
+    Homey.setTitle(t('title'));
+    document.getElementById('email-hint').textContent = t('email_hint');
+    document.getElementById('email-label').textContent = t('email_label');
+    document.getElementById('send-code').textContent = t('send_code');
+    document.getElementById('code-label').textContent = t('code_label');
+    document.getElementById('verify-code').textContent = t('verify_code');
+    document.getElementById('resend-code').textContent = t('resend_code');
+
+    function showError(err) {
+      Homey.hideLoadingOverlay();
+      Homey.alert((err && err.message) || String(err), 'error');
+    }
+
+    function sendCode() {
+      email = emailInput.value.trim();
+      if (!email) {
+        Homey.alert(t('error_email_required'), 'error');
+        return;
+      }
+      Homey.showLoadingOverlay();
+      Homey.emit('send_code', { email: email })
+        .then(function () {
+          Homey.hideLoadingOverlay();
+          document.getElementById('code-hint').textContent = t('code_hint', { email: email });
+          emailStep.style.display = 'none';
+          codeStep.style.display = '';
+          codeInput.value = '';
+          codeInput.focus();
+        })
+        .catch(showError);
+    }
+
+    emailStep.addEventListener('submit', function (event) {
+      event.preventDefault();
+      sendCode();
+    });
+
+    codeStep.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var code = codeInput.value.trim();
+      if (!code) {
+        Homey.alert(t('error_code_required'), 'error');
+        return;
+      }
+      Homey.showLoadingOverlay();
+      Homey.emit('verify_code', { code: code })
+        .then(function () {
+          Homey.hideLoadingOverlay();
+          onLoggedIn();
+        })
+        .catch(showError);
+    });
+
+    document.getElementById('resend-code').addEventListener('click', sendCode);
+  }());
+</script>

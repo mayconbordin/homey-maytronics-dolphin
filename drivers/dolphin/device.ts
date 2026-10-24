@@ -1,11 +1,12 @@
 'use strict';
 
 import Homey from 'homey';
-import { MaytronicsApi } from '../../lib/MaytronicsApi';
+import { AuthError, MaytronicsApi } from '../../lib/MaytronicsApi';
 import { MaytronicsCloud } from '../../lib/MaytronicsCloud';
 import {
   calculateState,
   CalculatedState,
+  DEFAULT_DEVICE_TYPE,
   LED_MODES,
   LED_MODE_IDS,
   CREDENTIAL_REFRESH_INTERVAL,
@@ -70,29 +71,29 @@ class DolphinDevice extends Homey.Device {
    */
   private async connectToCloud(): Promise<void> {
     try {
-      const settings = this.getSettings();
-      const store = this.getStore();
-      const { email, password } = settings;
-      const { motorUnitSerial } = store;
+      const {
+        email, refreshToken, serialNumber, motorUnitSerial,
+      } = this.getStore();
 
       this.log(`Connecting: email=${email}, motorUnitSerial=${motorUnitSerial}`);
-      this.log('Store contents:', JSON.stringify(store));
 
-      if (!email || !password) {
-        throw new Error('Missing email or password in device settings');
+      if (!refreshToken) {
+        // Paired with the retired email/password login, or never signed in
+        throw new AuthError(this.homey.__('device.error_login_required'));
       }
-      if (!motorUnitSerial) {
-        throw new Error('Missing motorUnitSerial in device store');
+      if (!serialNumber || !motorUnitSerial) {
+        throw new Error('Missing serialNumber or motorUnitSerial in device store');
       }
 
-      // Authenticate with REST API
-      this.log('Step 1: Logging in to Maytronics API...');
-      await this.api.login(email, password);
+      // Authenticate with Cognito using the stored refresh token
+      this.log('Step 1: Refreshing Maytronics login...');
+      this.api.setRefreshToken(refreshToken);
+      await this.api.ensureIdToken();
       this.log('Step 1: Login successful');
 
       // Get AWS credentials
       this.log('Step 2: Getting AWS credentials...');
-      this.awsCredentials = await this.api.getAwsCredentials(email, motorUnitSerial);
+      this.awsCredentials = await this.api.getAwsCredentials(serialNumber, this.getDeviceType());
       this.log('Step 2: AWS credentials received, fields:', Object.keys(this.awsCredentials));
 
       // Connect MQTT
@@ -109,11 +110,44 @@ class DolphinDevice extends Homey.Device {
       // Schedule periodic state refresh
       this.scheduleStateRefresh();
     } catch (err: any) {
-      const message = err?.message || String(err);
-      this.error('Failed to connect:', message);
-      await this.setUnavailable(message).catch(this.error);
-      this.scheduleReconnect();
+      await this.handleConnectionError(err);
     }
+  }
+
+  /**
+   * Mark the device unavailable and retry, unless the user has to sign in again.
+   */
+  private async handleConnectionError(err: any): Promise<void> {
+    const message = err?.message || String(err);
+    this.error('Failed to connect:', message);
+
+    if (err instanceof AuthError) {
+      // Retrying won't help, the user has to repair the device with a new code
+      this.clearTimers();
+      await this.cloud.disconnect();
+      const unavailableMessage = this.getStore().refreshToken
+        ? this.homey.__('device.error_login_expired')
+        : message;
+      await this.setUnavailable(unavailableMessage).catch(this.error);
+      return;
+    }
+
+    await this.setUnavailable(message).catch(this.error);
+    this.scheduleReconnect();
+  }
+
+  private getDeviceType(): string {
+    return this.getStore().deviceType || DEFAULT_DEVICE_TYPE;
+  }
+
+  /**
+   * Drop the current connection and connect again with the stored credentials.
+   * Used after the device has been repaired.
+   */
+  async reconnect(): Promise<void> {
+    this.clearTimers();
+    await this.cloud.disconnect();
+    await this.connectToCloud();
   }
 
   /**
@@ -331,7 +365,7 @@ class DolphinDevice extends Homey.Device {
         this.scheduleCredentialRefresh();
       } catch (err) {
         this.error('Credential refresh failed:', err);
-        this.scheduleReconnect();
+        await this.handleConnectionError(err);
       }
     }, CREDENTIAL_REFRESH_INTERVAL);
   }
@@ -363,10 +397,9 @@ class DolphinDevice extends Homey.Device {
    * Refresh AWS credentials and reconnect MQTT.
    */
   private async refreshCredentials(): Promise<void> {
-    const { email } = this.getSettings();
-    const { motorUnitSerial } = this.getStore();
+    const { serialNumber, motorUnitSerial } = this.getStore();
 
-    this.awsCredentials = await this.api.getAwsCredentials(email, motorUnitSerial);
+    this.awsCredentials = await this.api.getAwsCredentials(serialNumber, this.getDeviceType());
     await this.cloud.connect(motorUnitSerial, this.awsCredentials);
     this.cloud.requestState();
     this.log('Credentials refreshed, MQTT reconnected');
@@ -383,22 +416,6 @@ class DolphinDevice extends Homey.Device {
   }
 
   // --- Lifecycle ---
-
-  async onSettings({
-    newSettings,
-    changedKeys,
-  }: {
-    oldSettings: Record<string, unknown>;
-    newSettings: Record<string, unknown>;
-    changedKeys: string[];
-  }): Promise<string | void> {
-    if (changedKeys.includes('email') || changedKeys.includes('password')) {
-      // Re-authenticate with new credentials
-      this.clearTimers();
-      await this.cloud.disconnect();
-      await this.connectToCloud();
-    }
-  }
 
   async onDeleted(): Promise<void> {
     this.clearTimers();

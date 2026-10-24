@@ -1,15 +1,27 @@
 'use strict';
 
+// --- AWS Cognito (MyDolphin Plus email OTP login) ---
+
+export const COGNITO_ENDPOINT = 'https://cognito-idp.us-west-2.amazonaws.com/';
+export const COGNITO_CLIENT_ID = '4ed12eq01o6n0tl5f0sqmkq2na';
+export const COGNITO_CHALLENGE_NAME = 'CUSTOM_CHALLENGE';
+
+// Refresh the Cognito ID token when it expires within this window
+export const ID_TOKEN_REFRESH_WINDOW = 5 * 60 * 1000; // 5 minutes
+
 // --- Maytronics REST API ---
 
-export const API_BASE_URL = 'https://mbapp18.maytronics.com/api';
+export const API_BASE_URL = 'https://apps.maytronics.com';
 
 export const API_HEADERS: Record<string, string> = {
-  appkey: '346BDE92-53D1-4829-8A2E-B496014B586C',
-  'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
-  'integration-version': '1.0.19',
-  'User-Agent': 'HA-MyDolphin-Plus/1.0.25',
+  AppKey: '346BDE92-53D1-4829-8A2E-B496014B586C',
+  app_version: 'ios_3.1.7_2',
+  Accept: '*/*',
+  'User-Agent': 'Homey-Maytronics-Dolphin',
 };
+
+// Fallback when the user profile does not report a connection type
+export const DEFAULT_DEVICE_TYPE = '62';
 
 // --- AWS IoT ---
 

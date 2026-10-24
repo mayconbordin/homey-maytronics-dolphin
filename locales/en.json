@@ -1,12 +1,23 @@
 {
-  "drivers": {
-    "dolphin": {
-      "pair": {
-        "login_credentials": {
-          "title": "Maytronics Account",
-          "hint": "Enter the email and password you use for the MyDolphin Plus app."
-        }
-      }
+  "pair": {
+    "login": {
+      "title": "Maytronics Account",
+      "email_hint": "Enter the email address you use for the MyDolphin Plus app. We'll email you a sign-in code.",
+      "email_label": "Email",
+      "send_code": "Send code",
+      "code_hint": "Enter the code sent to __email__. It is valid for 5 minutes.",
+      "code_label": "Code",
+      "verify_code": "Sign in",
+      "resend_code": "Send a new code",
+      "error_email_required": "Please enter your email address.",
+      "error_code_required": "Please enter the code from the email.",
+      "error_no_code_sent": "Request a code first.",
+      "error_no_robot": "No robot is linked to this account. Add your robot in the MyDolphin Plus app first.",
+      "error_wrong_robot": "This account is linked to a different robot than this device."
     }
+  },
+  "device": {
+    "error_login_required": "Maytronics now signs in with an emailed code. Repair this device to sign in again.",
+    "error_login_expired": "Your Maytronics sign-in has expired. Repair this device to sign in again."
   }
 }

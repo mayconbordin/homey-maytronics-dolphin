@@ -1,7 +1,9 @@
 'use strict';
 
 import Homey from 'homey';
-import { MaytronicsApi } from '../../lib/MaytronicsApi';
+import { AuthError, MaytronicsApi } from '../../lib/MaytronicsApi';
+import { DEFAULT_DEVICE_TYPE } from '../../lib/constants';
+import type { RobotDetails } from '../../lib/types';
 import type DolphinDevice from './device';
 
 class DolphinDriver extends Homey.Driver {
@@ -55,47 +57,106 @@ class DolphinDriver extends Homey.Driver {
     this.log('DolphinDriver has been initialized');
   }
 
-  async onPair(session: Homey.Driver.PairSession) {
+  /**
+   * Register the email OTP login handlers used by the login view.
+   * `onVerified` runs once the emailed code has been accepted.
+   */
+  private registerLoginHandlers(
+    session: Homey.Driver.PairSession,
+    api: MaytronicsApi,
+    onVerified: (email: string) => Promise<void>,
+  ): void {
     let email = '';
-    let password = '';
-    let apiToken = '';
-    let serialNumber = '';
+    let cognitoSession = '';
 
-    session.setHandler('login', async (data: { username: string; password: string }) => {
-      email = data.username;
-      password = data.password;
-
-      const api = new MaytronicsApi();
-      const loginResult = await api.login(email, password);
-      apiToken = loginResult.token;
-      serialNumber = loginResult.Sernum;
-
+    session.setHandler('send_code', async (data: { email: string }) => {
+      email = String(data.email || '').trim();
+      if (!email) {
+        throw new Error(this.homey.__('pair.login.error_email_required'));
+      }
+      cognitoSession = await api.startLogin(email);
       return true;
     });
 
+    session.setHandler('verify_code', async (data: { code: string }) => {
+      if (!cognitoSession) {
+        throw new Error(this.homey.__('pair.login.error_no_code_sent'));
+      }
+      try {
+        await api.verifyCode(email, cognitoSession, String(data.code || ''));
+      } catch (err) {
+        // A wrong code returns a new session that the next attempt must use
+        if (err instanceof AuthError && err.session) {
+          cognitoSession = err.session;
+        }
+        throw err;
+      }
+      await onVerified(email);
+      return true;
+    });
+  }
+
+  /**
+   * Look up the robot linked to the signed-in account.
+   */
+  private async getRobot(api: MaytronicsApi) {
+    const profile = await api.getUserProfile();
+    const serialNumber = profile.Sernum;
+    if (!serialNumber) {
+      throw new Error(this.homey.__('pair.login.error_no_robot'));
+    }
+
+    let details: Partial<RobotDetails> = {};
+    try {
+      details = await api.getRobotDetails(serialNumber);
+    } catch (err) {
+      this.error('Failed to get robot details, continuing with profile data:', err);
+    }
+
+    // The AWS IoT thing name is the motor unit serial, which is the first 8
+    // characters of the robot serial when the API does not report it
+    const motorUnitSerial = profile.eSERNUM || details.eSERNUM || serialNumber.substring(0, 8);
+
+    return {
+      name: profile.MyRobotName || details.MyRobotName
+        || `Dolphin ${details.RobotFamily || details.PARTDES || 'Pool Cleaner'}`,
+      serialNumber,
+      motorUnitSerial,
+      deviceType: profile.connectVia || DEFAULT_DEVICE_TYPE,
+      robotFamily: details.RobotFamily || '',
+      productName: details.PARTDES || '',
+    };
+  }
+
+  async onPair(session: Homey.Driver.PairSession) {
+    const api = new MaytronicsApi();
+    let email = '';
+    let robot: Awaited<ReturnType<DolphinDriver['getRobot']>> | undefined;
+
+    this.registerLoginHandlers(session, api, async (verifiedEmail) => {
+      email = verifiedEmail;
+      robot = await this.getRobot(api);
+    });
+
     session.setHandler('list_devices', async () => {
-      const api = new MaytronicsApi();
-      api.setToken(apiToken);
-
-      const details = await api.getRobotDetails(serialNumber);
-
-      const deviceName = details.MyRobotName || `Dolphin ${details.RobotFamily || details.PARTDES || 'Pool Cleaner'}`;
+      if (!robot) {
+        return [];
+      }
 
       return [
         {
-          name: deviceName,
+          name: robot.name,
           data: {
-            id: details.eSERNUM,
+            id: robot.motorUnitSerial,
           },
           store: {
-            serialNumber,
-            motorUnitSerial: details.eSERNUM,
-            robotFamily: details.RobotFamily || '',
-            productName: details.PARTDES || '',
-          },
-          settings: {
             email,
-            password,
+            refreshToken: api.getRefreshToken(),
+            serialNumber: robot.serialNumber,
+            motorUnitSerial: robot.motorUnitSerial,
+            deviceType: robot.deviceType,
+            robotFamily: robot.robotFamily,
+            productName: robot.productName,
           },
         },
       ];
@@ -103,17 +164,24 @@ class DolphinDriver extends Homey.Driver {
   }
 
   async onRepair(session: Homey.Driver.PairSession, device: Homey.Device) {
-    session.setHandler('login', async (data: { username: string; password: string }) => {
-      const api = new MaytronicsApi();
-      await api.login(data.username, data.password);
+    const api = new MaytronicsApi();
 
-      // Update device settings with new credentials
-      await device.setSettings({
-        email: data.username,
-        password: data.password,
-      });
+    this.registerLoginHandlers(session, api, async (email) => {
+      const robot = await this.getRobot(api);
+      const { serialNumber } = device.getStore();
+      if (serialNumber && serialNumber !== robot.serialNumber) {
+        throw new Error(this.homey.__('pair.login.error_wrong_robot'));
+      }
 
-      return true;
+      await device.setStoreValue('email', email);
+      await device.setStoreValue('refreshToken', api.getRefreshToken());
+      await device.setStoreValue('serialNumber', robot.serialNumber);
+      await device.setStoreValue('deviceType', robot.deviceType);
+
+      // Devices paired before the OTP login kept the password in settings
+      await device.setSettings({ email: null, password: null }).catch(this.error);
+
+      await (device as DolphinDevice).reconnect();
     });
   }
 }

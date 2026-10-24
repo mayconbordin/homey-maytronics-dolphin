@@ -1,43 +1,62 @@
 'use strict';
 
-import crypto from 'crypto';
 import https from 'https';
-import { API_BASE_URL, API_HEADERS } from './constants';
-import type { ApiResponse, AwsCredentials, LoginData, RobotDetails } from './types';
+import { AuthError } from './AuthError';
+import {
+  API_BASE_URL,
+  API_HEADERS,
+  COGNITO_CHALLENGE_NAME,
+  COGNITO_CLIENT_ID,
+  COGNITO_ENDPOINT,
+  ID_TOKEN_REFRESH_WINDOW,
+} from './constants';
+import type {
+  ApiResponse,
+  AwsCredentials,
+  CognitoAuthenticationResult,
+  CognitoResponse,
+  RobotDetails,
+  UserProfile,
+} from './types';
+
+export { AuthError };
+
+// Cognito error types that mean the user has to sign in again
+const COGNITO_AUTH_ERRORS = [
+  'NotAuthorizedException',
+  'UserNotFoundException',
+  'CodeMismatchException',
+  'ExpiredCodeException',
+];
+
+interface HttpResponse {
+  statusCode: number;
+  body: string;
+}
 
 export class MaytronicsApi {
 
-  private token: string = '';
+  private idToken: string = '';
+  private idTokenExpiresAt: number = 0;
+  private refreshToken: string = '';
 
   /**
-   * Make a POST request to the Maytronics API.
+   * Make an HTTPS request and return the raw status code and body.
    */
-  private async post<T>(path: string, body: string, extraHeaders?: Record<string, string>): Promise<ApiResponse<T>> {
-    const url = `${API_BASE_URL}${path}`;
-    const bodyBuffer = Buffer.from(body, 'utf8');
-    const headers: Record<string, string> = {
-      ...API_HEADERS,
-      ...extraHeaders,
-      'Content-Length': String(bodyBuffer.length),
-    };
+  private request(method: string, url: string, headers: Record<string, string>, body?: string): Promise<HttpResponse> {
+    const bodyBuffer = body !== undefined ? Buffer.from(body, 'utf8') : undefined;
+    const allHeaders = bodyBuffer
+      ? { ...headers, 'Content-Length': String(bodyBuffer.length) }
+      : headers;
 
     return new Promise((resolve, reject) => {
-      const req = https.request(url, { method: 'POST', headers }, (res) => {
+      const req = https.request(url, { method, headers: allHeaders }, (res) => {
         let data = '';
         res.on('data', (chunk: Buffer) => {
           data += chunk.toString();
         });
         res.on('end', () => {
-          try {
-            const parsed = JSON.parse(data) as ApiResponse<T>;
-            if (parsed.Status !== '1') {
-              reject(new Error(`API error on ${path}: status=${parsed.Status}, body=${data}`));
-              return;
-            }
-            resolve(parsed);
-          } catch (err) {
-            reject(new Error(`Failed to parse API response from ${path}: ${data}`));
-          }
+          resolve({ statusCode: res.statusCode || 0, body: data });
         });
       });
       req.on('error', reject);
@@ -46,112 +65,178 @@ export class MaytronicsApi {
   }
 
   /**
-   * Validate that an email is registered with Maytronics.
+   * Call an AWS Cognito Identity Provider action.
    */
-  async validateEmail(email: string): Promise<boolean> {
-    const res = await this.post<{ isEmailExists: boolean }>(
-      '/users/isEmailExists/',
-      `Email=${String(email)}`,
-    );
-    return res.Data.isEmailExists;
+  private async cognito(target: string, payload: Record<string, unknown>): Promise<CognitoResponse> {
+    const res = await this.request('POST', COGNITO_ENDPOINT, {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': `AWSCognitoIdentityProviderService.${target}`,
+    }, JSON.stringify(payload));
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(res.body);
+    } catch (err) {
+      throw new Error(`Failed to parse Cognito ${target} response (HTTP ${res.statusCode}): ${res.body}`);
+    }
+
+    if (res.statusCode >= 400) {
+      // __type looks like "NotAuthorizedException" or "prefix#NotAuthorizedException"
+      const type = String(parsed.__type || '').split('#').pop() || '';
+      const message = parsed.message || parsed.Message || type;
+      if (COGNITO_AUTH_ERRORS.includes(type)) {
+        throw new AuthError(message);
+      }
+      throw new Error(`Cognito ${target} failed (HTTP ${res.statusCode}): ${type} ${message}`);
+    }
+
+    return parsed as CognitoResponse;
+  }
+
+  private setTokens(result: CognitoAuthenticationResult): void {
+    this.idToken = result.IdToken;
+    this.idTokenExpiresAt = Date.now() + result.ExpiresIn * 1000;
+    // REFRESH_TOKEN_AUTH does not return a new refresh token, keep the original
+    if (result.RefreshToken) {
+      this.refreshToken = result.RefreshToken;
+    }
   }
 
   /**
-   * Login with email and password.
-   * Returns the API token and robot serial number.
+   * Start the email OTP login. Maytronics emails a code to the user.
+   * Returns the Cognito session needed to verify the code.
    */
-  async login(email: string, password: string): Promise<LoginData> {
-    const res = await this.post<LoginData>(
-      '/users/Login/',
-      `Email=${String(email)}&Password=${String(password)}`,
-    );
-    this.token = res.Data.token;
+  async startLogin(email: string): Promise<string> {
+    const res = await this.cognito('InitiateAuth', {
+      AuthFlow: 'CUSTOM_AUTH',
+      ClientId: COGNITO_CLIENT_ID,
+      AuthParameters: { USERNAME: email },
+      ClientMetadata: {},
+    });
+    if (res.ChallengeName !== COGNITO_CHALLENGE_NAME || !res.Session) {
+      throw new Error(`Unexpected Cognito challenge: ${res.ChallengeName}`);
+    }
+    return res.Session;
+  }
+
+  /**
+   * Verify the emailed code. On success the ID and refresh tokens are kept.
+   * Throws an AuthError carrying a new session when the code was wrong but may be retried.
+   */
+  async verifyCode(email: string, session: string, code: string): Promise<void> {
+    const res = await this.cognito('RespondToAuthChallenge', {
+      ChallengeName: COGNITO_CHALLENGE_NAME,
+      ClientId: COGNITO_CLIENT_ID,
+      Session: session,
+      ChallengeResponses: { USERNAME: email, ANSWER: code.trim() },
+      ClientMetadata: {},
+    });
+    if (res.AuthenticationResult?.IdToken) {
+      this.setTokens(res.AuthenticationResult);
+      return;
+    }
+    // Cognito answers a wrong code with a new challenge
+    throw new AuthError('The code is incorrect', res.Session);
+  }
+
+  /**
+   * Make sure we have an ID token that is valid for a while, refreshing it if needed.
+   */
+  async ensureIdToken(): Promise<void> {
+    if (this.idToken && this.idTokenExpiresAt - Date.now() > ID_TOKEN_REFRESH_WINDOW) {
+      return;
+    }
+    if (!this.refreshToken) {
+      throw new AuthError('Not signed in');
+    }
+    const res = await this.cognito('InitiateAuth', {
+      AuthFlow: 'REFRESH_TOKEN_AUTH',
+      ClientId: COGNITO_CLIENT_ID,
+      AuthParameters: { REFRESH_TOKEN: this.refreshToken },
+      ClientMetadata: {},
+    });
+    if (!res.AuthenticationResult?.IdToken) {
+      throw new AuthError('Refresh token rejected');
+    }
+    this.setTokens(res.AuthenticationResult);
+  }
+
+  /**
+   * Make an authenticated request to the Maytronics API.
+   */
+  private async apiRequest<T>(method: 'GET' | 'POST', path: string, body?: string): Promise<ApiResponse<T>> {
+    await this.ensureIdToken();
+
+    const headers: Record<string, string> = {
+      ...API_HEADERS,
+      Authorization: `Bearer ${this.idToken}`,
+    };
+    if (method === 'POST') {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
+    }
+
+    const res = await this.request(method, `${API_BASE_URL}${path}`, headers, method === 'POST' ? body || '' : undefined);
+    if (res.statusCode >= 400) {
+      throw new Error(`API error on ${path}: HTTP ${res.statusCode}, body=${res.body}`);
+    }
+
+    let parsed: ApiResponse<T>;
+    try {
+      parsed = JSON.parse(res.body) as ApiResponse<T>;
+    } catch (err) {
+      throw new Error(`Failed to parse API response from ${path}: ${res.body}`);
+    }
+    if (parsed.Status !== '1' || !parsed.Data) {
+      throw new Error(`API error on ${path}: status=${parsed.Status}, body=${res.body}`);
+    }
+    return parsed;
+  }
+
+  /**
+   * Get the signed-in user's profile, including the robot serial number.
+   */
+  async getUserProfile(): Promise<UserProfile> {
+    const res = await this.apiRequest<UserProfile>('POST', '/mobapi/user/authenticate-user/');
     return res.Data;
   }
 
   /**
-   * Get robot details by robot serial number.
-   * Returns the motor unit serial (eSERNUM), robot family, name, etc.
+   * Get robot details by robot serial number (name, family, motor unit serial).
    */
   async getRobotDetails(serialNumber: string): Promise<RobotDetails> {
-    const res = await this.post<RobotDetails>(
-      '/serialnumbers/getrobotdetailsbyrobotsn/',
-      `Sernum=${String(serialNumber)}`,
-      { token: this.token },
+    const res = await this.apiRequest<RobotDetails>(
+      'POST',
+      '/mobapi/serial-numbers/getRobotDetailsByRobotSN/',
+      `SERNUM=${encodeURIComponent(serialNumber)}`,
     );
     return res.Data;
   }
 
   /**
-   * Get robot details by motor unit serial number (for periodic refresh).
+   * Get temporary AWS IoT credentials for the robot.
    */
-  async getRobotDetailsByMotorUnit(motorUnitSerial: string): Promise<RobotDetails> {
-    const res = await this.post<RobotDetails>(
-      '/serialnumbers/getrobotdetailsbymusn/',
-      `Sernum=${String(motorUnitSerial)}`,
-      { token: this.token },
-    );
-    return res.Data;
-  }
-
-  /**
-   * Encrypt the motor unit serial using AES-128-CBC.
-   * Key is derived from the first 2 characters of the email + "ha", hashed with MD5.
-   * Retries until the base64 result contains no '+' (avoids URL encoding issues).
-   */
-  private encryptMotorUnitSerial(email: string, motorUnitSerial: string): string {
-    const passwordStr = `${email.slice(0, 2)}ha`.toLowerCase();
-    const key = crypto.createHash('md5').update(passwordStr).digest();
-
-    // Retry with new random IV until result has no '+' (which would be
-    // decoded as a space in application/x-www-form-urlencoded bodies)
-    for (let i = 0; i < 20; i++) {
-      const iv = crypto.randomBytes(16);
-      const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
-      const encrypted = Buffer.concat([
-        cipher.update(motorUnitSerial, 'utf8'),
-        cipher.final(),
-      ]);
-      const result = Buffer.concat([iv, encrypted]).toString('base64');
-      if (!result.includes('+')) {
-        return result;
-      }
+  async getAwsCredentials(serialNumber: string, deviceType: string): Promise<AwsCredentials> {
+    const query = `sernum=${encodeURIComponent(serialNumber)}&device_type=${encodeURIComponent(deviceType)}`;
+    const res = await this.apiRequest<AwsCredentials>('GET', `/mt-sso/aws/getToken/?${query}`);
+    if (!res.Data.AccessKeyId) {
+      throw new Error(`getToken returned no credentials: ${JSON.stringify(res.Alert)}`);
     }
-    // Fallback: URL-encode the + characters
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
-    const encrypted = Buffer.concat([
-      cipher.update(motorUnitSerial, 'utf8'),
-      cipher.final(),
-    ]);
-    return Buffer.concat([iv, encrypted]).toString('base64').replace(/\+/g, '%2B');
-  }
-
-  /**
-   * Get temporary AWS IoT credentials.
-   * Encrypts the motor unit serial and exchanges it for AWS credentials.
-   */
-  async getAwsCredentials(email: string, motorUnitSerial: string): Promise<AwsCredentials> {
-    const encryptedSerial = this.encryptMotorUnitSerial(email, motorUnitSerial);
-    const res = await this.post<AwsCredentials>(
-      '/IOT/getToken_DecryptSN/',
-      `Sernum=${String(encryptedSerial)}`,
-      { token: this.token },
-    );
     return res.Data;
   }
 
   /**
-   * Get the current API token.
+   * Get the Cognito refresh token (to persist across restarts).
    */
-  getToken(): string {
-    return this.token;
+  getRefreshToken(): string {
+    return this.refreshToken;
   }
 
   /**
-   * Set the API token (for restoring from stored credentials).
+   * Set the Cognito refresh token (for restoring from stored credentials).
    */
-  setToken(token: string): void {
-    this.token = token;
+  setRefreshToken(refreshToken: string): void {
+    this.refreshToken = refreshToken;
+    this.idToken = '';
+    this.idTokenExpiresAt = 0;
   }
 }

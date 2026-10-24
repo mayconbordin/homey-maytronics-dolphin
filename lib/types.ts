@@ -8,9 +8,12 @@ export interface ApiResponse<T = unknown> {
   Alert?: Record<string, unknown>;
 }
 
-export interface LoginData {
+export interface UserProfile {
   Sernum: string;
-  token: string;
+  eSERNUM?: string;
+  MyRobotName?: string;
+  connectVia?: string;
+  mob_token?: string;
 }
 
 export interface RobotDetails {
@@ -29,6 +32,22 @@ export interface AwsCredentials {
   Token: string;
   AccessKeyId: string;
   SecretAccessKey: string;
+  TokenExpiration?: string;
+}
+
+// --- AWS Cognito Types ---
+
+export interface CognitoAuthenticationResult {
+  IdToken: string;
+  AccessToken?: string;
+  RefreshToken?: string;
+  ExpiresIn: number;
+}
+
+export interface CognitoResponse {
+  ChallengeName?: string;
+  Session?: string;
+  AuthenticationResult?: CognitoAuthenticationResult;
 }
 
 // --- AWS IoT Shadow Types ---
@@ -104,17 +123,4 @@ export interface DynamicMessage {
   description?: string;
   content?: Record<string, unknown>;
   temperature?: number;
-}
-
-// --- Internal Types ---
-
-export interface MaytronicsCredentials {
-  email: string;
-  password: string;
-  token: string;
-  serialNumber: string;
-  motorUnitSerial: string;
-  robotFamily: string;
-  robotName: string;
-  awsCredentials: AwsCredentials;
 }
