@@ -46,6 +46,25 @@
       ]
     },
     {
+      "id": "pws_error_occurred",
+      "title": {
+        "en": "A power supply error occurred"
+      },
+      "platforms": ["local"],
+      "tokens": [
+        {
+          "name": "error_code",
+          "type": "number",
+          "title": {
+            "en": "Error code"
+          },
+          "example": {
+            "en": "5"
+          }
+        }
+      ]
+    },
+    {
       "id": "filter_bag_full",
       "title": {
         "en": "Filter bag is full"

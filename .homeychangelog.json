@@ -9,6 +9,6 @@
     "en": "Added robot driving control"
   },
   "1.1.0": {
-    "en": "Sign in with an emailed code, as Maytronics no longer supports password login. Existing devices need to be repaired once to sign in again. Added the Walls Only, Cove, Spot Clean, Stairs, TicTac and Custom cleaning modes."
+    "en": "Sign in with an emailed code, as Maytronics no longer supports password login. Existing devices need to be repaired once to sign in again. Added the Walls Only, Cove, Spot Clean, Stairs, TicTac and Custom cleaning modes. Fixed the time remaining sensor. Added power supply error and robot connected sensors, and the serial number and firmware versions in the device settings. Removed the water temperature sensor from robots that don't have one."
   }
 }

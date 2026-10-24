@@ -1,0 +1,9 @@
+{
+  "type": "string",
+  "title": {
+    "en": "Power Supply Error"
+  },
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor"
+}

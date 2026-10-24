@@ -71,6 +71,14 @@ export interface ReportedState {
   robotError?: ErrorInfo;
   pwsError?: ErrorInfo;
   activity?: string;
+  isConnected?: { connected: boolean };
+  robotSerial?: string;
+  versions?: Versions;
+}
+
+export interface Versions {
+  pwsVersion?: { pwsHwVersion?: string; pwsSwVersion?: string };
+  robotVersion?: { muHwVersion?: string; muSwVersion?: string };
 }
 
 export interface SystemState {
@@ -87,8 +95,9 @@ export interface CycleInfo {
   cleaningMode?: {
     mode: string;
     cycleTime?: number;
-    cycleStartTimeUTC?: number;
   };
+  cycleStartTime?: number; // Local time, offset by systemState.timeZone
+  cycleStartTimeUTC?: number;
 }
 
 export interface LedState {

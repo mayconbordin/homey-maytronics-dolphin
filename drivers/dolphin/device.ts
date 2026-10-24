@@ -16,6 +16,11 @@ import {
 } from '../../lib/constants';
 import type { AwsCredentials, DynamicMessage, LedState, ReportedState } from '../../lib/types';
 
+// 0 and 255 both mean "no error"
+function isErrorCode(code: number): boolean {
+  return code > 0 && code !== 255;
+}
+
 class DolphinDevice extends Homey.Device {
 
   private api!: MaytronicsApi;
@@ -24,6 +29,7 @@ class DolphinDevice extends Homey.Device {
   private stateRefreshTimer?: ReturnType<typeof setTimeout>;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private previousStatus: string = '';
+  private previousPwsErrorCode?: number;
   private currentLedState: LedState = { ledMode: 1, ledIntensity: 80, ledEnable: true };
   private awsCredentials?: AwsCredentials;
 
@@ -60,6 +66,18 @@ class DolphinDevice extends Homey.Device {
     this.registerCapabilityListener('nav_left', async () => this.cloud.sendJoystick('left'));
     this.registerCapabilityListener('nav_right', async () => this.cloud.sendJoystick('right'));
     this.registerCapabilityListener('nav_stop', async () => this.cloud.sendJoystick('stop'));
+
+    // Don't show an empty temperature sensor for robots without one
+    if (!this.supportsTemperature() && this.hasCapability('measure_temperature')) {
+      await this.removeCapability('measure_temperature').catch(this.error);
+    }
+
+    // Capabilities added after the first release
+    for (const capability of ['robot_connected', 'pws_error']) {
+      if (!this.hasCapability(capability)) {
+        await this.addCapability(capability).catch(this.error);
+      }
+    }
 
     // Connect
     await this.connectToCloud();
@@ -187,7 +205,9 @@ class DolphinDevice extends Homey.Device {
 
     // Cleaning mode and cycle time remaining
     if (state.cycleInfo?.cleaningMode?.mode) {
-      const { mode, cycleTime, cycleStartTimeUTC } = state.cycleInfo.cleaningMode;
+      const { mode, cycleTime } = state.cycleInfo.cleaningMode;
+      // The start time is reported next to cleaningMode, not inside it
+      const { cycleStartTimeUTC } = state.cycleInfo;
       if (CLEANING_MODES[mode]) {
         this.setCapabilityValue('cleaning_mode', mode).catch(this.error);
       } else if (mode !== 'pickup') {
@@ -195,12 +215,15 @@ class DolphinDevice extends Homey.Device {
       }
 
       // Calculate time remaining
-      if (cycleTime && cycleStartTimeUTC) {
+      const isCleaning = calculatedStatus === undefined
+        || calculatedStatus === CalculatedState.Cleaning
+        || calculatedStatus === CalculatedState.Init;
+      if (isCleaning && cycleTime && cycleStartTimeUTC) {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const elapsedMinutes = Math.floor((nowSeconds - cycleStartTimeUTC) / 60);
         const remaining = Math.max(0, cycleTime - elapsedMinutes);
         this.setCapabilityValue('cycle_time_remaining', remaining).catch(this.error);
-      } else if (calculatedStatus === CalculatedState.Off) {
+      } else if (!isCleaning) {
         this.setCapabilityValue('cycle_time_remaining', 0).catch(this.error);
       }
     }
@@ -234,10 +257,10 @@ class DolphinDevice extends Homey.Device {
     // Robot errors
     if (state.robotError) {
       const { errorCode } = state.robotError;
-      const errorStr = errorCode > 0 ? `Error ${errorCode}` : 'None';
+      const errorStr = isErrorCode(errorCode) ? `Error ${errorCode}` : 'None';
       this.setCapabilityValue('robot_error', errorStr).catch(this.error);
 
-      if (errorCode > 0) {
+      if (isErrorCode(errorCode)) {
         this.driver.ready().then(() => {
           (this.homey.flow.getDeviceTriggerCard('robot_error_occurred') as any)
             .trigger(this, { error_code: errorCode })
@@ -246,11 +269,57 @@ class DolphinDevice extends Homey.Device {
       }
     }
 
+    // Power supply errors
+    if (state.pwsError) {
+      const { errorCode } = state.pwsError;
+      const errorStr = isErrorCode(errorCode) ? `Error ${errorCode}` : 'None';
+      this.setCapabilityValue('pws_error', errorStr).catch(this.error);
+
+      // Trigger once per new error, not on every state update
+      if (isErrorCode(errorCode) && errorCode !== this.previousPwsErrorCode) {
+        this.driver.ready().then(() => {
+          (this.homey.flow.getDeviceTriggerCard('pws_error_occurred') as any)
+            .trigger(this, { error_code: errorCode })
+            .catch(this.error);
+        }).catch(this.error);
+      }
+      this.previousPwsErrorCode = errorCode;
+    }
+
+    // Whether the robot itself is online (MQTT can be up while it isn't)
+    if (state.isConnected) {
+      this.setCapabilityValue('robot_connected', state.isConnected.connected).catch(this.error);
+    }
+
+    this.updateRobotInfo(state);
+
     // LED state
     if (state.led) {
       this.currentLedState = state.led;
       const ledModeStr = LED_MODES[state.led.ledMode] || 'blinking';
       this.setCapabilityValue('led_mode', ledModeStr).catch(this.error);
+    }
+  }
+
+  /**
+   * Show the serial number and firmware versions in the device settings.
+   */
+  private updateRobotInfo(state: ReportedState): void {
+    const info: Record<string, string> = {};
+    if (state.robotSerial) {
+      info.robot_serial = state.robotSerial;
+    }
+    if (state.versions?.pwsVersion?.pwsSwVersion) {
+      info.pws_firmware = state.versions.pwsVersion.pwsSwVersion;
+    }
+    if (state.versions?.robotVersion?.muSwVersion) {
+      info.robot_firmware = state.versions.robotVersion.muSwVersion;
+    }
+
+    const current = this.getSettings();
+    const changed = Object.keys(info).filter((key) => current[key] !== info[key]);
+    if (changed.length > 0) {
+      this.setSettings(info).catch(this.error);
     }
   }
 
@@ -412,10 +481,18 @@ class DolphinDevice extends Homey.Device {
    * Request temperature reading if the robot family supports it.
    */
   private requestTemperatureIfSupported(): void {
-    const { robotFamily, serialNumber } = this.getStore();
-    if (robotFamily === 'M700') {
-      this.cloud.requestTemperature(serialNumber);
+    if (this.supportsTemperature()) {
+      this.cloud.requestTemperature(this.getStore().serialNumber);
     }
+  }
+
+  /**
+   * Only the M700 family has a water temperature sensor. The robot details
+   * API does not always report the family, so fall back to the product name.
+   */
+  private supportsTemperature(): boolean {
+    const { robotFamily, productName } = this.getStore();
+    return robotFamily === 'M700' || /M700/i.test(productName || '');
   }
 
   // --- Lifecycle ---

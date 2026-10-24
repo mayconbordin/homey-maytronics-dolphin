@@ -102,6 +102,34 @@
         ]
       },
       {
+        "id": "pws_error_occurred",
+        "title": {
+          "en": "A power supply error occurred"
+        },
+        "platforms": [
+          "local"
+        ],
+        "tokens": [
+          {
+            "name": "error_code",
+            "type": "number",
+            "title": {
+              "en": "Error code"
+            },
+            "example": {
+              "en": "5"
+            }
+          }
+        ],
+        "args": [
+          {
+            "type": "device",
+            "name": "device",
+            "filter": "driver_id=dolphin"
+          }
+        ]
+      },
+      {
         "id": "filter_bag_full",
         "title": {
           "en": "Filter bag is full"
@@ -394,6 +422,7 @@
       "capabilities": [
         "cleaning_mode",
         "robot_status",
+        "robot_connected",
         "cycle_time_remaining",
         "filter_status",
         "measure_temperature",
@@ -401,6 +430,7 @@
         "wifi_signal",
         "network_name",
         "robot_error",
+        "pws_error",
         "led_mode",
         "nav_forward",
         "nav_stop",
@@ -448,6 +478,40 @@
       "repair": [
         {
           "id": "login"
+        }
+      ],
+      "settings": [
+        {
+          "type": "group",
+          "label": {
+            "en": "Robot information"
+          },
+          "children": [
+            {
+              "id": "robot_serial",
+              "type": "label",
+              "label": {
+                "en": "Serial number"
+              },
+              "value": ""
+            },
+            {
+              "id": "pws_firmware",
+              "type": "label",
+              "label": {
+                "en": "Power supply firmware"
+              },
+              "value": ""
+            },
+            {
+              "id": "robot_firmware",
+              "type": "label",
+              "label": {
+                "en": "Robot firmware"
+              },
+              "value": ""
+            }
+          ]
         }
       ],
       "id": "dolphin"
@@ -668,6 +732,31 @@
       "getable": true,
       "setable": false,
       "uiComponent": "sensor"
+    },
+    "pws_error": {
+      "type": "string",
+      "title": {
+        "en": "Power Supply Error"
+      },
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor"
+    },
+    "robot_connected": {
+      "type": "boolean",
+      "title": {
+        "en": "Robot Connected"
+      },
+      "getable": true,
+      "setable": false,
+      "uiComponent": "sensor",
+      "insights": true,
+      "insightsTitleTrue": {
+        "en": "Robot connected"
+      },
+      "insightsTitleFalse": {
+        "en": "Robot disconnected"
+      }
     },
     "robot_error": {
       "type": "string",

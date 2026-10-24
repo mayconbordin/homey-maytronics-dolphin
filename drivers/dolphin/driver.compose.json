@@ -6,6 +6,7 @@
   "capabilities": [
     "cleaning_mode",
     "robot_status",
+    "robot_connected",
     "cycle_time_remaining",
     "filter_status",
     "measure_temperature",
@@ -13,6 +14,7 @@
     "wifi_signal",
     "network_name",
     "robot_error",
+    "pws_error",
     "led_mode",
     "nav_forward",
     "nav_stop",
@@ -60,6 +62,40 @@
   "repair": [
     {
       "id": "login"
+    }
+  ],
+  "settings": [
+    {
+      "type": "group",
+      "label": {
+        "en": "Robot information"
+      },
+      "children": [
+        {
+          "id": "robot_serial",
+          "type": "label",
+          "label": {
+            "en": "Serial number"
+          },
+          "value": ""
+        },
+        {
+          "id": "pws_firmware",
+          "type": "label",
+          "label": {
+            "en": "Power supply firmware"
+          },
+          "value": ""
+        },
+        {
+          "id": "robot_firmware",
+          "type": "label",
+          "label": {
+            "en": "Robot firmware"
+          },
+          "value": ""
+        }
+      ]
     }
   ]
 }
