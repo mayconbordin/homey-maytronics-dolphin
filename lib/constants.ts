@@ -59,6 +59,12 @@ export const CLEANING_MODES: Record<string, { label: string; cycleTime: number }
   floor: { label: 'Floor Only', cycleTime: 120 },
   water: { label: 'Water Line', cycleTime: 120 },
   ultra: { label: 'Ultra Clean', cycleTime: 120 },
+  wall: { label: 'Walls Only', cycleTime: 120 },
+  cove: { label: 'Cove', cycleTime: 120 },
+  spot: { label: 'Spot Clean', cycleTime: 120 },
+  stairs: { label: 'Stairs', cycleTime: 120 },
+  tictac: { label: 'TicTac', cycleTime: 600 },
+  custom: { label: 'Custom', cycleTime: 120 },
 };
 
 // --- LED Modes ---

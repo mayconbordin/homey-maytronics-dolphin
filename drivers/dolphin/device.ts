@@ -6,6 +6,7 @@ import { MaytronicsCloud } from '../../lib/MaytronicsCloud';
 import {
   calculateState,
   CalculatedState,
+  CLEANING_MODES,
   DEFAULT_DEVICE_TYPE,
   LED_MODES,
   LED_MODE_IDS,
@@ -187,8 +188,10 @@ class DolphinDevice extends Homey.Device {
     // Cleaning mode and cycle time remaining
     if (state.cycleInfo?.cleaningMode?.mode) {
       const { mode, cycleTime, cycleStartTimeUTC } = state.cycleInfo.cleaningMode;
-      if (mode !== 'pickup') {
+      if (CLEANING_MODES[mode]) {
         this.setCapabilityValue('cleaning_mode', mode).catch(this.error);
+      } else if (mode !== 'pickup') {
+        this.log(`Unknown cleaning mode reported: ${mode}`);
       }
 
       // Calculate time remaining

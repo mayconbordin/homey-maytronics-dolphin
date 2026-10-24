@@ -187,6 +187,42 @@
                 "label": {
                   "en": "Ultra Clean"
                 }
+              },
+              {
+                "id": "wall",
+                "label": {
+                  "en": "Walls Only"
+                }
+              },
+              {
+                "id": "cove",
+                "label": {
+                  "en": "Cove"
+                }
+              },
+              {
+                "id": "spot",
+                "label": {
+                  "en": "Spot Clean"
+                }
+              },
+              {
+                "id": "stairs",
+                "label": {
+                  "en": "Stairs"
+                }
+              },
+              {
+                "id": "tictac",
+                "label": {
+                  "en": "TicTac"
+                }
+              },
+              {
+                "id": "custom",
+                "label": {
+                  "en": "Custom"
+                }
               }
             ]
           }
@@ -461,6 +497,42 @@
           "id": "ultra",
           "title": {
             "en": "Ultra Clean"
+          }
+        },
+        {
+          "id": "wall",
+          "title": {
+            "en": "Walls Only"
+          }
+        },
+        {
+          "id": "cove",
+          "title": {
+            "en": "Cove"
+          }
+        },
+        {
+          "id": "spot",
+          "title": {
+            "en": "Spot Clean"
+          }
+        },
+        {
+          "id": "stairs",
+          "title": {
+            "en": "Stairs"
+          }
+        },
+        {
+          "id": "tictac",
+          "title": {
+            "en": "TicTac"
+          }
+        },
+        {
+          "id": "custom",
+          "title": {
+            "en": "Custom"
           }
         }
       ]

@@ -12,6 +12,12 @@
     { "id": "short", "title": { "en": "Fast" } },
     { "id": "floor", "title": { "en": "Floor Only" } },
     { "id": "water", "title": { "en": "Water Line" } },
-    { "id": "ultra", "title": { "en": "Ultra Clean" } }
+    { "id": "ultra", "title": { "en": "Ultra Clean" } },
+    { "id": "wall", "title": { "en": "Walls Only" } },
+    { "id": "cove", "title": { "en": "Cove" } },
+    { "id": "spot", "title": { "en": "Spot Clean" } },
+    { "id": "stairs", "title": { "en": "Stairs" } },
+    { "id": "tictac", "title": { "en": "TicTac" } },
+    { "id": "custom", "title": { "en": "Custom" } }
   ]
 }
